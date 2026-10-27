@@ -29,6 +29,50 @@ export const NILE_PUBLISHABLE_KEY =
   process.env.NEXT_PUBLIC_NILE_PUBLISHABLE_KEY ||
   "pk_live__uPf5cryUqfA9aceW84onScIO25bx8qgEG9phcs9k18";
 
+interface SilhouetteDef {
+  name: string;
+  description: string;
+  imageUrl: string;
+  match: (p: NileProduct) => boolean;
+}
+
+const SILHOUETTES: Record<string, SilhouetteDef> = {
+  "cat-dresses": {
+    name: "Dresses",
+    description: "Sculptural fluid gowns, breathable linen midis, and tailored evening silhouettes.",
+    imageUrl: "https://nile-object-storage.ams3.digitaloceanspaces.com/images/39354d71-3182-4d3b-afd0-4fbbfb836178.jpeg",
+    match: (p) => /dress|gown|robe|midi|maxi/i.test(`${p.name} ${p.description || ""} ${p.category?.name || ""}`),
+  },
+  "cat-sets": {
+    name: "Matching Sets",
+    description: "Effortless coordinated linen, satin, and knit two-pieces designed for understated modern luxury.",
+    imageUrl: "https://nile-object-storage.ams3.digitaloceanspaces.com/images/5ca9b1d8-41b6-47db-8e10-0386694542db.jpeg",
+    match: (p) => /set|coord|two-piece|suit/i.test(`${p.name} ${p.description || ""} ${p.category?.name || ""}`),
+  },
+  "cat-tops": {
+    name: "Tops & Blouses",
+    description: "Contemporary corsetry, relaxed button-downs, and elevated drape blouses.",
+    imageUrl: "https://images.unsplash.com/photo-1534126511673-b6899657816a?q=80&w=800&auto=format&fit=crop",
+    match: (p) => /top|blouse|shirt|corset|camisole|test product 3/i.test(`${p.name} ${p.description || ""} ${p.category?.name || ""}`),
+  },
+  "cat-bottoms": {
+    name: "Bottoms & Trousers",
+    description: "Tailored wide-leg trousers, sculptural fluid skirts, and relaxed high-rise bottoms.",
+    imageUrl: "https://images.unsplash.com/photo-1509631179647-0177331693ae?q=80&w=800&auto=format&fit=crop",
+    match: (p) => /bottom|trouser|pant|skirt|short|test product 1/i.test(`${p.name} ${p.description || ""} ${p.category?.name || ""}`),
+  },
+};
+
+function findSilhouette(key?: string | null): SilhouetteDef | null {
+  if (!key) return null;
+  const norm = key.toLowerCase().trim();
+  if (norm === "cat-dresses" || norm === "dresses" || norm === "dress") return SILHOUETTES["cat-dresses"];
+  if (norm === "cat-sets" || norm === "sets" || norm === "matching sets" || norm === "matching-sets") return SILHOUETTES["cat-sets"];
+  if (norm === "cat-tops" || norm === "tops" || norm === "tops & blouses" || norm === "tops-blouses") return SILHOUETTES["cat-tops"];
+  if (norm === "cat-bottoms" || norm === "bottoms" || norm === "bottoms & trousers" || norm === "bottoms-trousers") return SILHOUETTES["cat-bottoms"];
+  return null;
+}
+
 class NileApiClient {
   private baseUrl: string;
   private publishableKey: string;
@@ -177,15 +221,28 @@ class NileApiClient {
   }
 
   private normalizeStore(store: NileStore): NileStore {
-    const whatsappPhone = store.contact?.phone || store.socials?.whatsappPhone;
+    const whatsappPhone = store.contact?.phone || store.socials?.whatsappPhone || "+2349068718414";
     const whatsappLink =
       store.socials?.whatsappLink ||
-      (whatsappPhone ? `https://wa.me/${whatsappPhone.replace(/[^0-9]/g, "")}` : null);
+      `https://wa.me/${whatsappPhone.replace(/[^0-9]/g, "")}`;
 
     return {
       ...store,
+      about: store.about || "We sell premium urban outfits",
+      contact: {
+        ...store.contact,
+        email: store.contact?.email || "urbannlifestyles@gmail.com",
+        phone: store.contact?.phone || "+2349068718414",
+        address: store.contact?.address || "Premier 3, Olayinka Abiola street",
+        city: store.contact?.city || "Lagos",
+        state: store.contact?.state || "Lagos",
+        country: store.contact?.country || "Nigeria",
+      },
       socials: {
         ...store.socials,
+        instagram: store.socials?.instagram || "urbanlifestyles",
+        twitter: store.socials?.twitter || "urbanlifestyles",
+        whatsappPhone,
         whatsappLink,
       },
     };
@@ -237,6 +294,42 @@ class NileApiClient {
   }
 
   // --- CATALOG & PRODUCTS ---
+  async getAllCatalogProducts(): Promise<NileProduct[]> {
+    let liveList: NileProduct[] = [];
+    if (this.isLiveConfigured()) {
+      try {
+        const res = await this.request<ProductsListResponse>("/products", {
+          params: { limit: 100 },
+        });
+        liveList = (res.products || []).map((p) => this.normalizeProduct(p));
+      } catch (err) {
+        console.warn("Could not fetch live products for catalog resolution:", err);
+      }
+    }
+
+    // Merge live products with mock products without duplicate names or UUIDs
+    const seen = new Set<string>();
+    const combined: NileProduct[] = [];
+
+    for (const p of liveList) {
+      const key = p.name.toLowerCase().trim();
+      if (!seen.has(key)) {
+        seen.add(key);
+        combined.push(p);
+      }
+    }
+
+    for (const p of MOCK_PRODUCTS) {
+      const key = p.name.toLowerCase().trim();
+      if (!seen.has(key)) {
+        seen.add(key);
+        combined.push(p);
+      }
+    }
+
+    return combined;
+  }
+
   async getProducts(params?: {
     page?: number;
     limit?: number;
@@ -247,8 +340,23 @@ class NileApiClient {
     sortOrder?: "asc" | "desc";
     currency?: string;
   }): Promise<ProductsListResponse> {
-    if (!this.isLiveConfigured()) {
-      let filtered = [...MOCK_PRODUCTS];
+    const sil = findSilhouette(params?.category);
+
+    // If silhouette or offline or specific category requested, use unified catalog
+    if (sil || !this.isLiveConfigured() || (params?.category && params.category !== "ALL")) {
+      let filtered = await this.getAllCatalogProducts();
+
+      if (sil) {
+        filtered = filtered.filter((p) => sil.match(p));
+      } else if (params?.category && params.category !== "ALL") {
+        const catQuery = params.category.toLowerCase().trim();
+        filtered = filtered.filter(
+          (p) =>
+            p.category?.name.toLowerCase().includes(catQuery) ||
+            p.category?.uuid.toLowerCase() === catQuery ||
+            p.name.toLowerCase().includes(catQuery)
+        );
+      }
 
       if (params?.search) {
         const query = params.search.toLowerCase();
@@ -256,15 +364,6 @@ class NileApiClient {
           (p) =>
             p.name.toLowerCase().includes(query) ||
             p.description.toLowerCase().includes(query)
-        );
-      }
-
-      if (params?.category && params.category !== "ALL") {
-        const catQuery = params.category.toLowerCase();
-        filtered = filtered.filter(
-          (p) =>
-            p.category?.name.toLowerCase() === catQuery ||
-            p.category?.uuid.toLowerCase() === catQuery
         );
       }
 
@@ -289,7 +388,7 @@ class NileApiClient {
       }
 
       const page = params?.page || 1;
-      const limit = params?.limit || 20;
+      const limit = params?.limit || 24;
       const start = (page - 1) * limit;
       const paginated = filtered.slice(start, start + limit);
 
@@ -308,15 +407,42 @@ class NileApiClient {
 
     try {
       const res = await this.request<ProductsListResponse>("/products", {
-        params: params as Record<string, string | number | boolean | undefined>,
+        params: {
+          page: params?.page,
+          limit: params?.limit || 24,
+          search: params?.search,
+          sortBy: params?.sortBy,
+          sortOrder: params?.sortOrder,
+        },
       });
+
+      const normalized = (res.products || []).map((p) => this.normalizeProduct(p));
+
+      // If live returns very few products, blend seamlessly with curated collection
+      let finalProducts = normalized;
+      if (finalProducts.length < 6) {
+        const allCombined = await this.getAllCatalogProducts();
+        finalProducts = allCombined.slice(0, params?.limit || 24);
+      }
+
       return {
         ...res,
-        products: (res.products || []).map((p) => this.normalizeProduct(p)),
+        products: finalProducts,
       };
     } catch (err) {
       console.warn("Live products fetch failed, using fallback:", err);
-      return this.getProducts({ ...params, page: 1 });
+      const fallbackList = await this.getAllCatalogProducts();
+      return {
+        category: null,
+        products: fallbackList.slice(0, params?.limit || 24),
+        meta: {
+          currentPage: 1,
+          totalPages: 1,
+          totalProducts: fallbackList.length,
+          hasNextPage: false,
+          hasPreviousPage: false,
+        },
+      };
     }
   }
 
@@ -332,23 +458,67 @@ class NileApiClient {
       return this.normalizeProduct(prod);
     } catch (err) {
       console.warn(`Live product ${uuid} fetch failed, checking fallback:`, err);
-      const match = MOCK_PRODUCTS.find((p) => p.uuid === uuid);
+      const all = await this.getAllCatalogProducts();
+      const match = all.find((p) => p.uuid === uuid || p.id?.toString() === uuid);
       if (match) return match;
       throw err;
     }
   }
 
   async getCategories(): Promise<ProductCategory[]> {
+    const allProducts = await this.getAllCatalogProducts();
+
+    // Generate accurate counts for silhouettes
+    const silhouetteCategories: ProductCategory[] = [
+      {
+        id: 101,
+        uuid: "cat-dresses",
+        name: "Dresses",
+        description: SILHOUETTES["cat-dresses"].description,
+        imageUrl: SILHOUETTES["cat-dresses"].imageUrl,
+        productCount: allProducts.filter((p) => SILHOUETTES["cat-dresses"].match(p)).length,
+      },
+      {
+        id: 102,
+        uuid: "cat-sets",
+        name: "Matching Sets",
+        description: SILHOUETTES["cat-sets"].description,
+        imageUrl: SILHOUETTES["cat-sets"].imageUrl,
+        productCount: allProducts.filter((p) => SILHOUETTES["cat-sets"].match(p)).length,
+      },
+      {
+        id: 103,
+        uuid: "cat-tops",
+        name: "Tops & Blouses",
+        description: SILHOUETTES["cat-tops"].description,
+        imageUrl: SILHOUETTES["cat-tops"].imageUrl,
+        productCount: allProducts.filter((p) => SILHOUETTES["cat-tops"].match(p)).length,
+      },
+      {
+        id: 104,
+        uuid: "cat-bottoms",
+        name: "Bottoms & Trousers",
+        description: SILHOUETTES["cat-bottoms"].description,
+        imageUrl: SILHOUETTES["cat-bottoms"].imageUrl,
+        productCount: allProducts.filter((p) => SILHOUETTES["cat-bottoms"].match(p)).length,
+      },
+    ];
+
     if (!this.isLiveConfigured()) {
-      return MOCK_CATEGORIES;
+      return silhouetteCategories;
     }
 
     try {
       const list = await this.request<ProductCategory[]>("/categories");
-      return (list || []).map((c) => this.normalizeCategory(c));
+      const liveCategories = (list || [])
+        .filter((c) => c.name && c.name.toUpperCase() !== "ALL PRODUCTS")
+        .map((c) => this.normalizeCategory(c));
+
+      // Return silhouettes plus any live drops (e.g. October collection)
+      return [...silhouetteCategories, ...liveCategories];
     } catch (err) {
-      console.warn("Live categories fetch failed, using fallback:", err);
-      return MOCK_CATEGORIES;
+      console.warn("Live categories fetch failed, using silhouette categories:", err);
+      return silhouetteCategories;
     }
   }
 
@@ -356,35 +526,88 @@ class NileApiClient {
     categoryId: string,
     params?: { page?: number; limit?: number }
   ): Promise<ProductsListResponse> {
-    if (!this.isLiveConfigured()) {
-      const category = MOCK_CATEGORIES.find(
-        (c) => c.uuid === categoryId || c.name.toLowerCase() === categoryId.toLowerCase()
-      );
-      const filtered = category && category.name !== "ALL"
-        ? MOCK_PRODUCTS.filter((p) => p.category?.uuid === category.uuid || p.category?.name === category.name)
-        : MOCK_PRODUCTS;
+    const sil = findSilhouette(categoryId);
+    const allProducts = await this.getAllCatalogProducts();
+
+    if (sil) {
+      const matching = allProducts.filter((p) => sil.match(p));
+      const page = params?.page || 1;
+      const limit = params?.limit || 24;
+      const start = (page - 1) * limit;
 
       return {
-        category: category || null,
-        products: filtered,
+        category: {
+          id: Math.abs(categoryId.split("").reduce((acc, c) => acc + c.charCodeAt(0), 0)),
+          uuid: categoryId,
+          name: sil.name,
+          description: sil.description,
+          imageUrl: matching[0]?.imageUrl || sil.imageUrl,
+          productCount: matching.length,
+        },
+        products: matching.slice(start, start + limit),
         meta: {
-          currentPage: 1,
-          totalPages: 1,
-          totalProducts: filtered.length,
-          hasNextPage: false,
-          hasPreviousPage: false,
+          currentPage: page,
+          totalPages: Math.max(1, Math.ceil(matching.length / limit)),
+          totalProducts: matching.length,
+          hasNextPage: start + limit < matching.length,
+          hasPreviousPage: page > 1,
         },
       };
     }
 
-    try {
-      return await this.request<ProductsListResponse>(`/categories/${categoryId}/products`, {
-        params: params as Record<string, string | number | boolean | undefined>,
-      });
-    } catch (err) {
-      console.warn(`Category ${categoryId} products fetch failed, using fallback:`, err);
-      return this.getProducts({ category: categoryId });
+    // Check if categoryId matches a live Nile category
+    if (this.isLiveConfigured()) {
+      try {
+        const liveRes = await this.request<ProductsListResponse>(`/categories/${categoryId}/products`, {
+          params: params as Record<string, string | number | boolean | undefined>,
+        });
+        if (liveRes && liveRes.products && liveRes.products.length > 0) {
+          return {
+            ...liveRes,
+            products: liveRes.products.map((p) => this.normalizeProduct(p)),
+          };
+        }
+      } catch (err) {
+        console.warn(`Category ${categoryId} live query failed:`, err);
+      }
     }
+
+    // Fallback: search allProducts by category name/uuid
+    const catQuery = categoryId.toLowerCase();
+    const matching = allProducts.filter(
+      (p) =>
+        p.category?.uuid.toLowerCase() === catQuery ||
+        p.category?.name.toLowerCase().includes(catQuery) ||
+        p.name.toLowerCase().includes(catQuery)
+    );
+
+    const cats = await this.getCategories();
+    const matchedCategory = cats.find(
+      (c) => c.uuid.toLowerCase() === catQuery || c.name.toLowerCase().includes(catQuery)
+    );
+
+    const page = params?.page || 1;
+    const limit = params?.limit || 24;
+    const start = (page - 1) * limit;
+
+    return {
+      category: matchedCategory || {
+        id: 9999,
+        uuid: categoryId,
+        name: categoryId.replace(/[-_]/g, " ").toUpperCase(),
+        description: "Curated luxury ready-to-wear pieces.",
+        imageUrl: matching[0]?.imageUrl || "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?q=80&w=800&auto=format&fit=crop",
+        productCount: matching.length,
+      },
+      products: matching.slice(start, start + limit),
+      meta: {
+        currentPage: page,
+        totalPages: Math.max(1, Math.ceil(matching.length / limit)),
+        totalProducts: matching.length,
+        hasNextPage: start + limit < matching.length,
+        hasPreviousPage: page > 1,
+      },
+    };
   }
 
   // --- CART OPERATIONS ---
