@@ -26,7 +26,8 @@ import {
 export const NILE_API_URL =
   process.env.NEXT_PUBLIC_NILE_API_URL || "https://api.nile.ng/storefront/v1";
 export const NILE_PUBLISHABLE_KEY =
-  process.env.NEXT_PUBLIC_NILE_PUBLISHABLE_KEY || "";
+  process.env.NEXT_PUBLIC_NILE_PUBLISHABLE_KEY ||
+  "pk_live__uPf5cryUqfA9aceW84onScIO25bx8qgEG9phcs9k18";
 
 class NileApiClient {
   private baseUrl: string;
@@ -190,6 +191,37 @@ class NileApiClient {
     };
   }
 
+  private normalizeCategory(cat: ProductCategory): ProductCategory {
+    let imageUrl = cat.imageUrl || "";
+    let imageUrls: string[] = [];
+
+    if (typeof imageUrl === "string" && imageUrl.trim().startsWith("[")) {
+      try {
+        const parsed = JSON.parse(imageUrl);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          imageUrl = parsed[0];
+          imageUrls = parsed;
+        }
+      } catch {
+        // keep as is
+      }
+    } else if (imageUrl) {
+      imageUrls = [imageUrl];
+    }
+
+    if (!imageUrl) {
+      imageUrl = "https://images.unsplash.com/photo-1515886657613-9f3515b0c78f?q=80&w=800&auto=format&fit=crop";
+      imageUrls = [imageUrl];
+    }
+
+    return {
+      ...cat,
+      imageUrl,
+      imageUrls,
+      products: (cat.products || []).map((p) => this.normalizeProduct(p)),
+    };
+  }
+
   // --- STORE BRANDING ---
   async getStore(): Promise<NileStore> {
     if (!this.isLiveConfigured()) {
@@ -312,7 +344,8 @@ class NileApiClient {
     }
 
     try {
-      return await this.request<ProductCategory[]>("/categories");
+      const list = await this.request<ProductCategory[]>("/categories");
+      return (list || []).map((c) => this.normalizeCategory(c));
     } catch (err) {
       console.warn("Live categories fetch failed, using fallback:", err);
       return MOCK_CATEGORIES;

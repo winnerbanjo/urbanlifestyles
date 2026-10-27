@@ -39,7 +39,12 @@ function ShopContent() {
     async function loadCategories() {
       try {
         const cats = await nileApi.getCategories();
-        setCategories(cats);
+        const hasAll = cats.some((c) => c.name.toUpperCase() === "ALL");
+        if (!hasAll) {
+          setCategories([{ uuid: "all", name: "ALL", description: null }, ...cats]);
+        } else {
+          setCategories(cats);
+        }
       } catch (err) {
         console.error("Failed loading categories:", err);
       }
@@ -69,8 +74,9 @@ function ShopContent() {
           sortOrder = "desc";
         }
 
+        const isAll = selectedCategory === "ALL" || selectedCategory.toLowerCase() === "all products";
         const res = await nileApi.getProducts({
-          category: selectedCategory === "ALL" ? undefined : selectedCategory,
+          category: isAll ? undefined : selectedCategory,
           search: searchQuery || undefined,
           sortBy,
           sortOrder,
