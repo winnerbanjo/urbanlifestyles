@@ -50,15 +50,18 @@ export default function HomePage() {
 
       <main className="flex-1">
         {/* Editorial Hero Section */}
-        <section className="relative w-full h-[80vh] min-h-[520px] max-h-[780px] bg-[#171717] overflow-hidden">
-          <Image
-            src="https://images.unsplash.com/photo-1490481651871-ab68de25d43d?q=80&w=2070&auto=format&fit=crop"
-            alt="Urbanlifestyles Luxury Fashion Campaign"
-            fill
-            priority
-            className="object-cover object-center opacity-85 scale-102 transition-transform duration-1000"
-          />
-          <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-black/20 to-transparent" />
+        <section className="relative w-full h-[85vh] min-h-[540px] max-h-[820px] bg-[#171717] overflow-hidden">
+          <video
+            autoPlay
+            muted
+            loop
+            playsInline
+            preload="auto"
+            className="absolute inset-0 w-full h-full object-cover object-center opacity-85"
+          >
+            <source src="/videos/hero-campaign.mp4" type="video/mp4" />
+          </video>
+          <div className="absolute inset-0 bg-gradient-to-t from-black/75 via-black/35 to-black/15" />
 
           <div className="absolute inset-0 flex flex-col justify-end p-6 sm:p-12 lg:p-16 max-w-7xl mx-auto">
             <div className="max-w-xl text-white space-y-3">
